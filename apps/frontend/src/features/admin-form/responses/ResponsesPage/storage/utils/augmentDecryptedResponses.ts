@@ -58,7 +58,13 @@ export type AugmentedDecryptedResponseV4 = {
   field: FieldResponseV4
   questionNumber?: number
   downloadUrl?: string
+  unanswered?: boolean
 }
+
+export const isAugmentedV4Response = (
+  row: AugmentedDecryptedResponse | AugmentedDecryptedResponseV4,
+): row is AugmentedDecryptedResponseV4 =>
+  'field' in row && 'provenance' in row.field
 
 export const augmentDecryptedResponsesV4 = (
   formFields: FormFieldDto[],

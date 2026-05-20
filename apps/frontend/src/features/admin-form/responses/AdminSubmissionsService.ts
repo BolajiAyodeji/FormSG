@@ -31,7 +31,6 @@ import {
   buildFormFieldMetaMap,
   convertVerifiedToV4,
   processDecryptedContent,
-  processDecryptedContentV3,
 } from './ResponsesPage/storage/utils/processDecryptedContent'
 
 /**
@@ -94,12 +93,10 @@ export const getDecryptedSubmissionById = async ({
   formId,
   submissionId,
   secretKey,
-  useV4,
 }: {
   formId: string
   submissionId: string
   secretKey?: string
-  useV4?: boolean
 }) => {
   if (!secretKey) return
 
@@ -108,11 +105,7 @@ export const getDecryptedSubmissionById = async ({
     submissionId,
   })
 
-  let processedContent,
-    processedContentV4,
-    submissionSecretKey,
-    mrfVersion,
-    responsesV4
+  let processedContent, responses, submissionSecretKey, mrfVersion
   switch (encryptedSubmission.submissionType) {
     case SubmissionType.Encrypt: {
       const decryptedContent = formsgSdk.crypto.decrypt(secretKey, {
@@ -124,78 +117,60 @@ export const getDecryptedSubmissionById = async ({
         throw new Error('Could not decrypt the storage mode response')
       }
       processedContent = processDecryptedContent(decryptedContent)
+
+      responses = augmentDecryptedResponses(
+        processedContent,
+        encryptedSubmission.attachmentMetadata,
+      )
       break
     }
     case SubmissionType.Multirespondent: {
-      const decryptedContent = formsgSdk.cryptoV3.decrypt(secretKey, {
-        encryptedContent: encryptedSubmission.encryptedContent,
-        encryptedSubmissionSecretKey:
-          encryptedSubmission.encryptedSubmissionSecretKey,
-        verifiedContent: encryptedSubmission.verifiedContent,
-        version: encryptedSubmission.version,
-      })
-      if (!decryptedContent)
-        throw new Error('Could not decrypt the multirespondent form response')
-      processedContent = await processDecryptedContentV3(
+      const formFieldsMeta = buildFormFieldMetaMap(
         encryptedSubmission.form_fields,
-        decryptedContent,
       )
-      if (useV4) {
-        const formFieldsMeta = buildFormFieldMetaMap(
-          encryptedSubmission.form_fields,
-        )
-        const decryptedV4 = formsgSdk.cryptoV3.decryptToV4(
-          secretKey,
+      const decryptedV4 = formsgSdk.cryptoV3.decryptToV4(
+        secretKey,
+        {
+          encryptedContent: encryptedSubmission.encryptedContent,
+          encryptedSubmissionSecretKey:
+            encryptedSubmission.encryptedSubmissionSecretKey,
+          verifiedContent: encryptedSubmission.verifiedContent,
+          version: encryptedSubmission.version,
+        },
+        formFieldsMeta,
+      )
+      if (!decryptedV4) {
+        datadogLogs.logger.error(
+          'Could not decrypt the multirespondent form response in v4',
           {
-            encryptedContent: encryptedSubmission.encryptedContent,
-            encryptedSubmissionSecretKey:
-              encryptedSubmission.encryptedSubmissionSecretKey,
-            verifiedContent: encryptedSubmission.verifiedContent,
-            version: encryptedSubmission.version,
-          },
-          formFieldsMeta,
-        )
-
-        if (!decryptedV4) {
-          datadogLogs.logger.error(
-            'Could not decrypt the multirespondent form response in v4',
-            {
-              meta: {
-                action: 'getDecryptedSubmissionById',
-                formId,
-                submissionId,
-              },
+            meta: {
+              action: 'getDecryptedSubmissionById',
+              formId,
+              submissionId,
             },
-          )
-          throw new Error(
-            'Could not decrypt the multirespondent form response in v4',
-          )
-        }
-
-        const processedContentV4 = decryptedV4.verified
-          ? {
-              ...decryptedV4.responses,
-              ...convertVerifiedToV4(decryptedV4.verified),
-            }
-          : decryptedV4.responses
-        responsesV4 = augmentDecryptedResponsesV4(
-          encryptedSubmission.form_fields,
-          processedContentV4,
-          encryptedSubmission.attachmentMetadata,
+          },
+        )
+        throw new Error(
+          'Could not decrypt the multirespondent form response in v4',
         )
       }
-      submissionSecretKey = decryptedContent.submissionSecretKey
+      const processedContentV4 = decryptedV4.verified
+        ? {
+            ...decryptedV4.responses,
+            ...convertVerifiedToV4(decryptedV4.verified),
+          }
+        : decryptedV4.responses
+      responses = augmentDecryptedResponsesV4(
+        encryptedSubmission.form_fields,
+        processedContentV4,
+        encryptedSubmission.attachmentMetadata,
+      )
+      submissionSecretKey = decryptedV4.submissionSecretKey
       mrfVersion = encryptedSubmission.mrfVersion
       break
     }
   }
 
-  const responses = augmentDecryptedResponses(
-    processedContent,
-    encryptedSubmission.attachmentMetadata,
-  )
-
-  // Add metadata for display.
   return {
     refNo: encryptedSubmission.refNo,
     submissionTime: encryptedSubmission.submissionTime,
@@ -209,7 +184,6 @@ export const getDecryptedSubmissionById = async ({
         ? encryptedSubmission.mrfMeta
         : undefined,
     responses,
-    responsesV4,
     mrfVersion,
   }
 }

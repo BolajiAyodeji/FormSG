@@ -11,9 +11,8 @@ import {
   StackDivider,
   Text,
 } from '@chakra-ui/react'
-import { useFeatureIsOn } from '@growthbook/growthbook-react'
+import { AttachmentAnswerV4 } from '@opengovsg/formsg-sdk'
 
-import { featureFlags } from 'formsg-shared/constants'
 import { FormResponseMode } from 'formsg-shared/types'
 import {
   getMultirespondentSubmissionEditPath,
@@ -39,6 +38,11 @@ import {
   MRF_WORKFLOW_STATUS_LABEL,
 } from '../constants'
 import { useStorageResponsesContext } from '../ResponsesPage/storage'
+import {
+  AugmentedDecryptedResponse,
+  AugmentedDecryptedResponseV4,
+  isAugmentedV4Response,
+} from '../ResponsesPage/storage/utils/augmentDecryptedResponses'
 
 import { DecryptedRow } from './DecryptedRow'
 import { DecryptedRowV4 } from './DecryptedRowV4'
@@ -124,13 +128,10 @@ export const IndividualResponsePage = (): JSX.Element => {
   const { data: form } = useAdminForm()
 
   const isMrf = form?.responseMode === FormResponseMode.Multirespondent
-  const useV4Display = useFeatureIsOn(featureFlags.answerObjectDecryption)
 
   const { user } = useUser()
   const { secretKey } = useStorageResponsesContext()
-  const { data, isLoading, isError } = useIndividualSubmission({
-    useV4: useV4Display,
-  })
+  const { data, isLoading, isError } = useIndividualSubmission()
 
   // Logic to determine which key to use to decrypt attachments.
   const attachmentDecryptionKey =
@@ -144,12 +145,14 @@ export const IndividualResponsePage = (): JSX.Element => {
 
   const attachmentDownloadUrls = useMemo(() => {
     const attachmentDownloadUrls = new Map()
-    data?.responses.forEach(({ questionNumber, downloadUrl, answer }) => {
-      if (!questionNumber || !downloadUrl || !answer) return
-      attachmentDownloadUrls.set(questionNumber, {
-        url: downloadUrl,
-        filename: answer,
-      })
+    data?.responses.forEach((row) => {
+      const { questionNumber, downloadUrl } = row
+      if (!questionNumber || !downloadUrl) return
+      const filename = isAugmentedV4Response(row)
+        ? (row.field.answer as AttachmentAnswerV4).value
+        : row.answer
+      if (!filename) return
+      attachmentDownloadUrls.set(questionNumber, { url: downloadUrl, filename })
     })
     return attachmentDownloadUrls
   }, [data?.responses])
@@ -312,24 +315,28 @@ export const IndividualResponsePage = (): JSX.Element => {
         ) : (
           <>
             <Stack spacing="1.5rem" divider={<StackDivider />}>
-              {useV4Display && data?.responsesV4
-                ? data.responsesV4.map((row) => (
-                    <DecryptedRowV4
-                      key={row.fieldId}
-                      fieldId={row.fieldId}
-                      field={row.field}
-                      questionNumber={row.questionNumber}
-                      downloadUrl={row.downloadUrl}
-                      attachmentDecryptionKey={attachmentDecryptionKey}
-                    />
-                  ))
-                : data?.responses.map((r, idx) => (
-                    <DecryptedRow
-                      row={r}
-                      attachmentDecryptionKey={attachmentDecryptionKey}
-                      key={idx}
-                    />
-                  ))}
+              {isMrf
+                ? (data?.responses as AugmentedDecryptedResponseV4[])?.map(
+                    (row) => (
+                      <DecryptedRowV4
+                        key={row.fieldId}
+                        fieldId={row.fieldId}
+                        field={row.field}
+                        questionNumber={row.questionNumber}
+                        downloadUrl={row.downloadUrl}
+                        attachmentDecryptionKey={attachmentDecryptionKey}
+                      />
+                    ),
+                  )
+                : (data?.responses as AugmentedDecryptedResponse[])?.map(
+                    (r, idx) => (
+                      <DecryptedRow
+                        row={r}
+                        attachmentDecryptionKey={attachmentDecryptionKey}
+                        key={idx}
+                      />
+                    ),
+                  )}
               <Box />
             </Stack>
             {data?.payment && (
